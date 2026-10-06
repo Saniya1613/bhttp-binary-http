@@ -1,0 +1,41 @@
+* connected to localhost port 9000 (one connection for all requests)
+> PREFACE
+>   0000  42 48 54 50 2f 31 0d 0a                           |BHTP/1..|
+> HEADERS frame  length=50 type=0x01 flags=0x01(END_STREAM) stream=1
+>   header : 00 00 32 01 01 00 00 00 01 
+>   0000  01 00 03 47 45 54 02 00  0b 2f 69 6e 64 65 78 2e  |...GET.../index.|
+>   0010  68 74 6d 6c 04 00 09 6c  6f 63 61 6c 68 6f 73 74  |html...localhost|
+>   0020  05 00 09 62 63 75 72 6c  2f 31 2e 30 06 00 03 2a  |...bcurl/1.0...*|
+>   0030  2f 2a                                             |/*|
+>   :method: GET
+>   :path: /index.html
+>   host: localhost
+>   user-agent: bcurl/1.0
+>   accept: */*
+< HEADERS frame  length=84 type=0x01 flags=0x00 stream=1
+<   header : 00 00 54 01 00 00 00 00 01 
+<   0000  03 00 03 32 30 30 07 00  18 74 65 78 74 2f 68 74  |...200...text/ht|
+<   0010  6d 6c 3b 20 63 68 61 72  73 65 74 3d 75 74 66 2d  |ml; charset=utf-|
+<   0020  38 08 00 03 31 37 35 09  00 0a 62 73 65 72 76 65  |8...175...bserve|
+<   0030  2f 31 2e 30 0a 00 1d 54  75 65 2c 20 30 36 20 4f  |/1.0...Tue, 06 O|
+<   0040  63 74 20 32 30 32 36 20  30 39 3a 30 30 3a 30 30  |ct 2026 09:00:00|
+<   0050  20 47 4d 54                                       | GMT|
+<   :status: 200
+<   content-type: text/html; charset=utf-8
+<   content-length: 175
+<   server: bserve/1.0
+<   last-modified: Tue, 06 Oct 2026 09:00:00 GMT
+< DATA frame  length=175 type=0x00 flags=0x01(END_STREAM) stream=1
+<   header : 00 00 af 00 01 00 00 00 01 
+<   0000  3c 21 64 6f 63 74 79 70  65 20 68 74 6d 6c 3e 0a  |<!doctype html>.|
+<   0010  3c 68 74 6d 6c 3e 0a 3c  68 65 61 64 3e 3c 74 69  |<html>.<head><ti|
+<   0020  74 6c 65 3e 42 48 54 50  2f 31 3c 2f 74 69 74 6c  |tle>BHTP/1</titl|
+<   0030  65 3e 3c 6c 69 6e 6b 20  72 65 6c 3d 22 73 74 79  |e><link rel="sty|
+<   0040  6c 65 73 68 65 65 74 22  20 68 72 65 66 3d 22 2f  |lesheet" href="/|
+<   0050  63 73 73 2f 73 74 79 6c  65 2e 63 73 73 22 3e 3c  |css/style.css"><|
+<   0060  2f 68 65 61 64 3e 0a 3c  62 6f 64 79 3e 3c 68 31  |/head>.<body><h1|
+<   0070  3e 48 65 6c 6c 6f 20 6f  76 65 72 20 42 48 54 50  |>Hello over BHTP|
+<   0080  2f 31 3c 2f 68 31 3e 3c  70 3e 53 65 72 76 65 64  |/1</h1><p>Served|
+<   0090  20 62 79 20 62 73 65 72  76 65 2e 3c 2f 70 3e 3c  | by bserve.</p><|
+<   00a0  2f 62 6f 64 79 3e 0a 3c  2f 68 74 6d 6c 3e 0a     |/body>.</html>.|
+* /index.html -> 200
