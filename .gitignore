@@ -1,0 +1,6 @@
+bserve
+bcurl
+*.o
+*.dSYM/
+__pycache__/
+www/big.bin
