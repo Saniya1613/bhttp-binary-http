@@ -1,136 +1,73 @@
-# Annotated hexdump — one complete request and response
+# Annotated hexdump
 
-**Saniya Sanjiv Patil** · 24bcs10246
+Saniya Sanjiv Patil (24bcs10246)
 
-Captured with:
+This walks through every byte of one full request and response. I started the server with `./bserve ./www 9000` and fetched the home page with `./bcurl -v localhost:9000/index.html`. The raw output from `-v` is saved in [docs/capture.txt](docs/capture.txt).
 
-```
-$ ./bserve ./www 9000 &
-$ ./bcurl -v localhost:9000/index.html
-```
+Altogether the client sent 67 bytes and the server sent back 277.
 
-The raw `-v` output is in [`docs/capture.txt`](docs/capture.txt). Every byte that crossed the wire is accounted for below. (`www/index.html` had its mtime set to 2026-10-06 09:00:00 UTC so the capture is reproducible.)
+## What the client sends
 
----
+### The opening bytes
 
-## Client → server (67 bytes)
+The client starts with `42 48 54 50 2f 31 0d 0a`. In ASCII that reads `BHTP/1` followed by a carriage return and a newline. It's sent once per connection, and it tells the server that this client speaks version 1 of the protocol.
 
-### Connection preface (8 bytes, once per connection)
+### The request frame
 
-```
-42 48 54 50 2f 31 0d 0a      "BHTP/1\r\n"   — SPEC §1; anything else and the server closes
-```
+Next comes the frame header: `00 00 32 01 01 00 00 00 01`.
 
-### HEADERS frame — the request (9 + 50 bytes)
+The first three bytes, `00 00 32`, are the length. `0x32` is 50, so 50 bytes of payload follow. The next byte, `01`, is the type, which means HEADERS. After that, `01` is the flags byte with END_STREAM set, because a request has no body. The last four bytes, `00 00 00 01`, give stream ID 1, since this is the first request on the connection.
 
-Frame header:
+Then come the 50 bytes of headers. Every name used here has a number, so none of them are spelled out.
 
-```
-00 00 32         Length    = 0x000032 = 50 payload bytes
-01               Type      = 0x1 HEADERS
-01               Flags     = 0x01 END_STREAM  (no request body follows)
-00 00 00 01      R = 0, Stream ID = 1          (first request: 1, then 3, 5, …)
-```
+`01 00 03 47 45 54` is `:method` (number 1) with a 3-byte value, `GET`.
 
-Header block (50 bytes). Every name here is in the static table, so no name strings are sent:
+`02 00 0b` then `2f 69 6e 64 65 78 2e 68 74 6d 6c` is `:path` (number 2) with an 11-byte value, `/index.html`.
 
-```
-offset  bytes                                    meaning
-0x00    01                                       index 1  = :method
-0x01    00 03                                    value_len = 3
-0x03    47 45 54                                 "GET"
-0x06    02                                       index 2  = :path
-0x07    00 0b                                    value_len = 11
-0x09    2f 69 6e 64 65 78 2e 68 74 6d 6c         "/index.html"
-0x14    04                                       index 4  = host
-0x15    00 09                                    value_len = 9
-0x17    6c 6f 63 61 6c 68 6f 73 74               "localhost"
-0x20    05                                       index 5  = user-agent
-0x21    00 09                                    value_len = 9
-0x23    62 63 75 72 6c 2f 31 2e 30               "bcurl/1.0"
-0x2c    06                                       index 6  = accept
-0x2d    00 03                                    value_len = 3
-0x2f    2a 2f 2a                                 "*/*"
-0x32    — end (6 + 14 + 12 + 12 + 6 = 50 = Length ✓)
-```
+`04 00 09` then `6c 6f 63 61 6c 68 6f 73 74` is `host` (number 4) with a 9-byte value, `localhost`.
 
----
+`05 00 09` then `62 63 75 72 6c 2f 31 2e 30` is `user-agent` (number 5) with a 9-byte value, `bcurl/1.0`.
 
-## Server → client (277 bytes)
+`06 00 03 2a 2f 2a` is `accept` (number 6) with a 3-byte value, `*/*`.
 
-### HEADERS frame — the response head (9 + 84 bytes)
+Adding those up gives 6 + 14 + 12 + 12 + 6 = 50 bytes, which matches the length in the frame header.
 
-Frame header:
+## What the server sends back
 
-```
-00 00 54         Length    = 0x54 = 84 payload bytes
-01               Type      = 0x1 HEADERS
-00               Flags     = 0  (no END_STREAM: a body follows)
-00 00 00 01      Stream ID = 1  (answers request 1)
-```
+### The response headers
 
-Header block (84 bytes):
+The server's first frame header is `00 00 54 01 00 00 00 00 01`.
 
-```
-offset  bytes                                    meaning
-0x00    03                                       index 3  = :status
-0x01    00 03                                    value_len = 3
-0x03    32 30 30                                 "200"
-0x06    07                                       index 7  = content-type
-0x07    00 18                                    value_len = 24
-0x09    74 65 78 74 2f 68 74 6d 6c 3b 20 63      "text/html; charset=utf-8"
-        68 61 72 73 65 74 3d 75 74 66 2d 38
-0x21    08                                       index 8  = content-length
-0x22    00 03                                    value_len = 3
-0x24    31 37 35                                 "175"
-0x27    09                                       index 9  = server
-0x28    00 0a                                    value_len = 10
-0x2a    62 73 65 72 76 65 2f 31 2e 30            "bserve/1.0"
-0x34    0a                                       index 10 = last-modified
-0x35    00 1d                                    value_len = 29
-0x37    54 75 65 2c 20 30 36 20 4f 63 74 20      "Tue, 06 Oct 2026 09:00:00 GMT"
-        32 30 32 36 20 30 39 3a 30 30 3a 30
-        30 20 47 4d 54
-0x54    — end (6 + 27 + 6 + 13 + 32 = 84 = Length ✓)
-```
+The length is `0x54`, which is 84 bytes. The type is `01`, HEADERS again. This time the flags byte is `00`, because the body is still to come. The stream ID is 1, which shows this is the answer to request 1.
 
-### DATA frame — the body (9 + 175 bytes)
+The 84 bytes of headers are:
 
-Frame header:
+`03 00 03 32 30 30` is `:status` (number 3) with the value `200`.
 
-```
-00 00 af         Length    = 0xaf = 175 payload bytes  (matches content-length)
-00               Type      = 0x0 DATA
-01               Flags     = 0x01 END_STREAM  (last frame of this response)
-00 00 00 01      Stream ID = 1
-```
+`07 00 18` then 24 bytes is `content-type` (number 7) with the value `text/html; charset=utf-8`.
 
-Payload: the 175 bytes of `www/index.html`, unchanged:
+`08 00 03 31 37 35` is `content-length` (number 8) with the value `175`.
 
-```
-0000  3c 21 64 6f 63 74 79 70  65 20 68 74 6d 6c 3e 0a  |<!doctype html>.|
-0010  3c 68 74 6d 6c 3e 0a 3c  68 65 61 64 3e 3c 74 69  |<html>.<head><ti|
-0020  74 6c 65 3e 42 48 54 50  2f 31 3c 2f 74 69 74 6c  |tle>BHTP/1</titl|
-0030  65 3e 3c 6c 69 6e 6b 20  72 65 6c 3d 22 73 74 79  |e><link rel="sty|
-0040  6c 65 73 68 65 65 74 22  20 68 72 65 66 3d 22 2f  |lesheet" href="/|
-0050  63 73 73 2f 73 74 79 6c  65 2e 63 73 73 22 3e 3c  |css/style.css"><|
-0060  2f 68 65 61 64 3e 0a 3c  62 6f 64 79 3e 3c 68 31  |/head>.<body><h1|
-0070  3e 48 65 6c 6c 6f 20 6f  76 65 72 20 42 48 54 50  |>Hello over BHTP|
-0080  2f 31 3c 2f 68 31 3e 3c  70 3e 53 65 72 76 65 64  |/1</h1><p>Served|
-0090  20 62 79 20 62 73 65 72  76 65 2e 3c 2f 70 3e 3c  | by bserve.</p><|
-00a0  2f 62 6f 64 79 3e 0a 3c  2f 68 74 6d 6c 3e 0a     |/body>.</html>.|
-```
+`09 00 0a` then 10 bytes is `server` (number 9) with the value `bserve/1.0`.
 
-END_STREAM is set, so the response for stream 1 is complete. The connection stays open: bcurl could now send stream 3 on it. Here it had nothing else to fetch, so it closed the socket; the server saw EOF and its connection loop ended.
+`0a 00 1d` then 29 bytes is `last-modified` (number 10) with the value `Tue, 06 Oct 2026 09:00:00 GMT`.
 
----
+That's 6 + 27 + 6 + 13 + 32 = 84 bytes, matching the length.
 
-## What the bytes cost
+### The body
 
-| | BHTP/1 | Equivalent HTTP/1.1 text |
-|---|---|---|
-| Request | 8 preface + 59 = **67 B** | `GET /index.html HTTP/1.1` + 3 headers = 86 B |
-| Response head | **93 B** | status line + 5 headers = 146 B |
-| Body | 175 + 9 framing | 175 |
+The last frame header is `00 00 af 00 01 00 00 00 01`.
 
-The saving comes from the static table (no name strings) and from replacing `": "` / `"\r\n"` delimiters with length prefixes — which is also why the receiver never scans for a delimiter and always knows how many bytes to read next.
+The length is `0xaf`, which is 175 bytes, the same number the server promised in `content-length`. The type is `00`, which means DATA. The flags byte is `01`, END_STREAM, because this is the last frame of the response. The stream ID is 1 again.
+
+The 175 bytes that follow are the contents of `www/index.html`, sent exactly as they are on disk. They begin with `3c 21 64 6f 63 74 79 70 65`, which is `<!doctype`, and end with `3c 2f 68 74 6d 6c 3e 0a`, which is `</html>` and a newline. The full dump is in [docs/capture.txt](docs/capture.txt).
+
+## After the response
+
+Because END_STREAM is set, the client knows the response to stream 1 is complete. The connection is still open at this point, and the client could send a second request on stream 3. In this run it had nothing else to fetch, so it closed the connection.
+
+## How much space it saves
+
+The same request written as ordinary HTTP/1.1 text takes 81 bytes. In BHTP/1 it takes 67, even counting the 8 opening bytes. The response headers shrink from 146 bytes to 93.
+
+Most of the saving comes from sending a number in place of each header name. The rest comes from replacing the colons, spaces and line breaks with length bytes. Those length bytes also mean the receiver always knows exactly how much to read next, so it never has to scan through text looking for the end of a line.

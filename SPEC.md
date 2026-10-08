@@ -1,98 +1,119 @@
-# BHTP/1 — HTTP semantics in a binary frame
+# BHTP/1 Specification
 
-**Saniya Sanjiv Patil** · 24bcs10246 · Network Architecture course project
+Saniya Sanjiv Patil (24bcs10246), Network Architecture project
 
-BHTP/1 carries an HTTP-style request and response (method, path, status, headers, body) over one TCP connection as length-prefixed binary frames. All integers are unsigned, **big-endian** (network byte order). "MUST", "SHOULD" and "MAY" are as in RFC 2119.
+BHTP/1 is a small version of HTTP that sends binary frames instead of lines of text. A client asks for a file, the server sends it back, and both of them use a single TCP connection to do it.
 
-## 1. Connection
+Every number in this protocol is unsigned and big-endian, which means the most important byte comes first.
 
-1. The client opens **one** TCP connection and first sends the 8-byte preface `42 48 54 50 2F 31 0D 0A` (ASCII `BHTP/1\r\n`).
-2. A server that receives any other 8 bytes MUST close the connection without replying. (A stray HTTP/1.1 client, or a future `BHTP/2` client, is thus refused cleanly instead of being misparsed as frames.)
-3. After the preface both sides exchange frames only. The connection stays open after a response; the client MAY send further requests on it. Either side MAY close it at any time; a client SHOULD close once it has no more requests.
-4. A client MUST NOT open a second connection to the same server while one is open.
+## 1. Opening the connection
 
-## 2. Frame header (9 bytes, fixed)
+The client opens one TCP connection to the server. Before anything else, it sends eight fixed bytes: `42 48 54 50 2F 31 0D 0A`, which spell out `BHTP/1\r\n`.
 
-```
- 0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-----------------------------------------------+---------------+
-|                 Length (24)                   |   Type (8)    |
-+---------------+-+-------------------------------------------+-+
-|   Flags (8)   |R|               Stream ID (31)                |
-+---------------+-+---------------------------------------------+
-|                   Payload (Length bytes) ...                  |
-```
+If the server receives anything else as its first eight bytes, it closes the connection straight away. That way, a normal web browser or any other program that wanders in is turned away, instead of having its text misread as frames.
 
-| Field | Bits | Meaning |
-|---|---|---|
-| Length | 24 | Payload bytes after the 9-byte header (0 … 16 777 215). |
-| Type | 8 | Frame type, §3. |
-| Flags | 8 | Per-type bit flags. Unknown flags MUST be ignored and SHOULD be sent as 0. |
-| R | 1 | Reserved. Sent as 0, MUST be ignored on receipt. |
-| Stream ID | 31 | Which request/response this frame belongs to. 0 = the connection itself. |
+After those eight bytes, the two sides only ever send frames. The connection stays open after each response, so the client can keep sending requests on it. The client must never open a second connection to the same server.
 
-**Why these widths (and why HTTP/2 chose 24/8/8/31).**
-*Length 24:* the receiver can always size a buffer before reading, and 16 MiB is a hard upper bound on that buffer. 32 bits would let one 4 GiB frame monopolise the connection; 16 bits (64 KiB) would chop large files into many small frames for no gain. Bodies larger than one frame are simply split into several DATA frames. *Type 8 / Flags 8:* one byte each keeps the header byte-aligned with no bit-shifting, gives 256 types — far more than v1 uses, which is the room v2 grows into — and 8 independent booleans per type. *Stream 31 + R:* every response names the request it answers, so a v2 can interleave several requests on the same connection without changing the header. 31 rather than 32 bits keeps the value positive in languages with only signed 32-bit ints (Java), and the spare bit is reserved for future use. Total = 9 bytes: under 0.06 % overhead on a 16 KiB DATA frame.
+## 2. The frame header
 
-## 3. Frame types
+Every frame starts with a 9-byte header, and the payload follows right after it.
 
-| Type | Name | Payload | Flags |
-|---|---|---|---|
-| `0x0` | DATA | Body bytes (any length, may be 0). | END_STREAM `0x01` |
-| `0x1` | HEADERS | A header block, §4. | END_STREAM `0x01` |
-| `0x7` | GOAWAY | Empty. Sender is closing the connection. Stream ID MUST be 0. | — |
-| others | — | **A receiver meeting a frame type it does not know MUST skip it cleanly:** read and discard exactly `Length` payload bytes, then carry on with the next frame as if it had not arrived. It MUST NOT close the connection or send an error because of it. | — |
+The first three bytes are the **length**: how many payload bytes come after the header. The fourth byte is the **type**, which says what kind of frame this is. The fifth byte holds the **flags**, a set of on/off switches. The last four bytes are the **stream ID**, which says which request the frame belongs to.
 
-END_STREAM means "this is the sender's last frame for this stream".
+The very first bit of the stream ID is reserved. Senders always set it to 0, and receivers ignore it. Receivers also ignore any flag they don't recognise.
 
-## 4. Header block (payload of HEADERS)
+### Why I picked these sizes
 
-A sequence of fields, back to back, until the payload ends. There is no count; `Length` bounds the block.
+I used the same layout as HTTP/2, which splits the header into 24, 8, 8 and 31 bits. Here is why each size makes sense.
 
-```
-field := index (1 byte)
-         [ name_len (1 byte)  name (name_len bytes) ]   -- only if index == 0
-         value_len (2 bytes)  value (value_len bytes)
-```
+The length is 24 bits, so a single frame can hold up to about 16 MB. That gives the receiver a hard limit on how much memory one frame can ever need. With 32 bits, one sender could push a 4 GB frame and hog the connection. With only 16 bits, frames would top out at 64 KB, and big files would be chopped into lots of tiny pieces. If a file is bigger than one frame, it simply goes out as several frames.
 
-* **index 1–10** — the name is from the static table below (no name bytes on the wire).
-* **index 0** — literal name follows: 1–255 bytes of lowercase visible ASCII (`0x21–0x7E`, no `A–Z`).
-* **index 11–255** — reserved for future static-table entries. The receiver MUST skip the field (its layout is the same as indices 1–10, so it can).
+The type gets a whole byte, which allows 256 different kinds of frame. Version 1 only uses three, so there is plenty of space left for new ones later.
 
-Values are 0–65 535 bytes of UTF-8 and MUST NOT contain `0x00`. Names beginning with `:` are pseudo-headers and MUST come from the table.
+The flags also get a whole byte, which gives each frame eight separate on/off options. Keeping type and flags as full bytes also means nobody has to do awkward bit-shifting to read them.
 
-| # | Name | # | Name |
-|---|---|---|---|
-| 1 | `:method` | 6 | `accept` |
-| 2 | `:path` | 7 | `content-type` |
-| 3 | `:status` | 8 | `content-length` |
-| 4 | `host` | 9 | `server` |
-| 5 | `user-agent` | 10 | `last-modified` |
+The stream ID is 31 bits. Every response carries the ID of the request it is answering, which means a future version could send several requests at once over the same connection without changing the header. HTTP/2 uses 31 bits rather than 32 so that the number stays positive even in languages like Java that only have signed integers. The spare bit is kept aside for later use.
 
-These are exactly the ten names a bcurl/bserve exchange sends, so a normal exchange carries no name strings at all — HPACK's first two mechanisms (static table + length-prefixed literals), without Huffman or the dynamic table.
+Altogether the header is just 9 bytes, which adds very little overhead to each frame.
 
-## 5. Request and response
+## 3. Kinds of frame
 
-**Request.** The client picks a new Stream ID — odd, non-zero, larger than any it used before on this connection (1, 3, 5, …) — and sends one HEADERS frame with END_STREAM set, containing `:method` (`GET` or `HEAD`) and `:path` (MUST start with `/`), and SHOULD contain `host`. v1 requests have no body; a server MUST ignore DATA frames from a client.
+Version 1 has three frame types.
 
-**Response.** The server answers on the **same Stream ID**: one HEADERS frame containing `:status` (3 ASCII digits) and SHOULD contain `content-type` and `content-length`, then zero or more DATA frames. The last frame of the response carries END_STREAM — the HEADERS frame itself if there is no body (`HEAD`, empty file). The response to one request completes before the server reads the next one in v1.
+A **DATA** frame (type `0x0`) carries part of a file's contents.
 
-**Path mapping.** `:path` (with any `?query` or `#fragment` removed) is appended to the server's root directory; a path ending in `/`, or naming a directory, means `index.html` inside it. A path with a `..` segment, or one that resolves outside the root, MUST NOT be served.
+A **HEADERS** frame (type `0x1`) carries the request or response headers, laid out as described in section 4.
 
-| Status | When |
-|---|---|
-| 200 | File found; body is its bytes. |
-| 400 | Malformed request: header block does not parse (a length runs past the payload, bad literal name, `0x00` in a value), `:method`/`:path` missing, `:path` not starting with `/`, Stream ID 0, or HEADERS larger than the server's limit (bserve: 16 384 bytes). |
-| 404 | No such file, or path outside the root. |
-| 405 | `:method` other than `GET`/`HEAD`. |
+A **GOAWAY** frame (type `0x7`) has no payload and simply means "I'm closing the connection". Its stream ID is always 0.
 
-Because every frame is length-prefixed, a malformed *request* never desynchronises the connection: the server replies 400 on that stream and keeps reading frames. Only EOF, a bad preface, or GOAWAY ends the connection.
+DATA and HEADERS frames can carry the **END_STREAM** flag (value `0x01`). It means "this is my last frame for this request".
 
-## 6. Client behaviour (bcurl)
+### Frame types nobody has heard of
 
-Sends the preface and requests as above; writes DATA payloads of the response to stdout; with `-v`, prints every frame sent and received as a hexdump on stderr. Ignores frames for other streams and skips unknown types. Exits **0** if every status was below 400, **22** if any was 4xx/5xx, **7** if it could not connect, **8** if the connection broke or the response was malformed.
+**A receiver that meets a frame type it does not know MUST skip it cleanly.** It reads exactly as many bytes as the length field says, throws them away, and carries on with the next frame as if nothing happened. It must not close the connection or reply with an error.
 
-## 7. Room for version 2
+This one rule is what makes a version 2 possible. New frame types can be added later, and older programs will just step over them.
 
-v2 can add frame types (e.g. PING, a body-carrying POST, flow control), flags, and static-table entries 11–255, and can multiplex streams — and a v1 peer still works, because it skips what it does not know. A change to the header layout itself needs a new preface (`BHTP/2\r\n`), which a v1 server refuses by closing.
+## 4. How headers are written
+
+The payload of a HEADERS frame is a list of header fields placed one after another until the payload runs out. There's no count at the start, because the frame's length already says where the list ends.
+
+Each field begins with a one-byte **index**.
+
+If the index is between 1 and 10, the header name comes from the list of ten names below, so the name itself is never sent. Straight after the index come two bytes giving the value's length, and then the value.
+
+If the index is 0, the name is spelled out instead. After the index there is one byte for the name's length, then the name itself, and after that the two-byte value length and the value. Spelled-out names must be between 1 and 255 characters, all lowercase, with no spaces.
+
+If the index is 11 or higher, the field is reserved for the future. It has the same shape as a numbered field, so the receiver can skip it safely.
+
+Values can be up to 65,535 bytes long and must never contain a zero byte.
+
+### The ten numbered names
+
+These are the only header names my client and server actually send. They are numbered in this order: `:method` is 1, `:path` is 2, `:status` is 3, `host` is 4, `user-agent` is 5, `accept` is 6, `content-type` is 7, `content-length` is 8, `server` is 9 and `last-modified` is 10.
+
+Names that start with a colon are special, and they must always use their number rather than being spelled out. Giving every common name a number means an ordinary request or response carries no name text at all, which is the same trick HTTP/2's header compression starts with.
+
+## 5. Asking for a file and getting it back
+
+### The request
+
+The client gives each request a stream ID. The first request uses 1, the next one 3, then 5, and so on. Each request is a single HEADERS frame with the END_STREAM flag set. It must include `:method`, which is either `GET` or `HEAD`, and `:path`, which must start with a slash. It should also include `host`.
+
+Requests in version 1 never have a body, so the server ignores any DATA frames a client sends.
+
+### The response
+
+The server answers using the same stream ID as the request. First it sends one HEADERS frame containing `:status` (such as `200`), and usually `content-type` and `content-length` as well. Then it sends the file in one or more DATA frames.
+
+The last frame of the response has END_STREAM set. If there's no body at all, for example in reply to a `HEAD` request or for an empty file, the HEADERS frame carries END_STREAM itself.
+
+The server finishes one response before it reads the next request.
+
+### Finding the file
+
+The server takes `:path`, drops anything after a `?` or `#`, and looks for that file inside its root folder. A path that ends in a slash, or points at a folder, means the `index.html` inside it. Any path containing `..`, or one that leads outside the root folder, is never served.
+
+### Status codes
+
+The server replies **200** when it finds the file, and the body is the file's contents.
+
+It replies **404** when the file doesn't exist, or when the path tries to leave the root folder.
+
+It replies **405** when the method is anything other than `GET` or `HEAD`.
+
+It replies **400** when the request is broken. That covers headers that can't be read (for example a length that runs past the end of the payload, a badly formed name, or a zero byte in a value), a missing `:method` or `:path`, a path that doesn't start with a slash, a stream ID of 0, or a HEADERS frame bigger than 16,384 bytes.
+
+A broken request does not break the connection. Because every frame states its own length, the server always knows where the next frame starts. It sends back a 400 for that request and keeps listening. The connection only ends when the first eight bytes are wrong, when a GOAWAY arrives, or when the other side hangs up.
+
+## 6. How the client behaves
+
+My client, `bcurl`, sends the eight opening bytes and then its requests, and prints the body of each response to the screen. With the `-v` option, it also prints every frame it sends and receives as a hexdump. It ignores frames meant for other streams and skips frame types it doesn't know.
+
+When it finishes, `bcurl` exits with 0 if everything worked, 22 if any response had a 4xx or 5xx status, 7 if it couldn't connect at all, and 8 if the connection dropped or the server's reply didn't make sense.
+
+## 7. Leaving room for version 2
+
+A version 2 can add new frame types, new flags and new numbered header names, and it can send several requests at the same time. Version 1 programs will keep working alongside it, because they skip anything they don't recognise.
+
+If version 2 ever needs to change the frame header itself, it will open with `BHTP/2\r\n` instead. A version 1 server won't recognise that and will simply close the connection, so nothing gets misread.

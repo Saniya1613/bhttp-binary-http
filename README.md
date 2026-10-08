@@ -1,52 +1,41 @@
-# BHTP/1 — HTTP, in binary
+# BHTP/1: HTTP, in binary
 
-Network Architecture course project · **Saniya Sanjiv Patil** · 24bcs10246
+Network Architecture project by Saniya Sanjiv Patil (24bcs10246)
 
-Two tracks, one protocol: a server (`bserve`) and a client (`bcurl`) that talk only through the spec.
+This project is a small binary version of HTTP. It has two programs: `bserve`, a server that hands out files, and `bcurl`, a client that asks for them. The two only talk to each other through the protocol written down in the spec.
 
-| Deliverable | File |
-|---|---|
-| 1. The spec (two pages) | [`SPEC.md`](SPEC.md) |
-| 2. The program | [`src/`](src) — `bserve.c`, `bcurl.c`, shared `proto.c` |
-| 3. Annotated hexdump of one request + response | [`HEXDUMP.md`](HEXDUMP.md) |
+There are three parts to hand in. The spec is in [SPEC.md](SPEC.md). The code is in the [src](src) folder: `bserve.c` is the server, `bcurl.c` is the client, and `proto.c` holds the code they share. The annotated hexdump of one complete request and response is in [HEXDUMP.md](HEXDUMP.md).
 
-## Build
+## Building it
 
-```sh
-make            # needs a C compiler; Linux or macOS
-```
+You just need a C compiler. Run `make` in this folder and it builds both programs. It works on macOS and Linux.
 
-## Run
+## Running it
 
-```sh
-./bserve ./www 9000                      # Track 1 — serve ./www on port 9000
-./bcurl -v localhost:9000/index.html     # Track 2 — body to stdout, frames hexdumped to stderr
-```
-
-`bcurl` options:
-
-- `-v` hexdump every frame sent and received (DATA payloads cut at 256 bytes); `-vv` dumps them in full
-- `-I` send `HEAD` instead of `GET`
-- extra paths are fetched on the **same** connection: `./bcurl localhost:9000/ /css/style.css /missing`
-- exit code: `0` ok, `22` if any response was 4xx/5xx, `7` cannot connect, `8` protocol error
-
-`bserve -v ./www 9000` hexdumps every frame on the server side too.
-
-## Protocol in one glance
+Open two terminal windows. In the first one, start the server and point it at the `www` folder:
 
 ```
-preface  "BHTP/1\r\n"                         (client, once)
-frame    Length:24 | Type:8 | Flags:8 | R:1 Stream:31 | payload
-types    0x0 DATA · 0x1 HEADERS · 0x7 GOAWAY · anything else → skip Length bytes
-headers  index:8 [name_len:8 name] value_len:16 value   (index 1–10 = static table)
+./bserve ./www 9000
 ```
 
-See [`SPEC.md`](SPEC.md) for the full rules and the reasoning behind the field widths.
+In the second one, ask for a page:
 
-## Test
-
-```sh
-make test
+```
+./bcurl -v localhost:9000/index.html
 ```
 
-`tests/interop_test.py` is written only from the spec (no shared code). It drives `bserve` with hand-built frames — 200, 404, 400, 405, keep-alive, path traversal, oversized headers, unknown frame types, unknown header indices, the reserved bit, a bad preface — and runs `bcurl` against a deliberately odd mock server that injects unknown frames, to check the client skips them and never opens a second connection.
+The page is printed to the screen. Because of `-v`, every frame that goes back and forth is also printed as a hexdump. Press Ctrl + C in the first window to stop the server.
+
+A few other things you can try with `bcurl`:
+
+- Add more paths to fetch them all over the same connection, for example `./bcurl localhost:9000/ /css/style.css /missing`.
+- Use `-I` to send a `HEAD` request instead of `GET`.
+- Use `-vv` instead of `-v` to see large file bodies in full. With `-v`, they're cut off after 256 bytes.
+
+`bcurl` exits with 0 when everything worked, 22 if any response was an error such as 404, 7 if it couldn't connect, and 8 if the connection broke partway through.
+
+You can also start the server as `./bserve -v ./www 9000` to see the frames from the server's side.
+
+## Testing it
+
+Run `make test`. The tests in `tests/interop_test.py` were written only from the spec and don't share any code with the C programs. They send hand-built frames to the server and check how it handles normal requests, missing files, broken requests, oversized headers, unknown frame types and more. They also run `bcurl` against a deliberately strange fake server that mixes in unknown frames, to make sure the client skips them and never opens a second connection.
